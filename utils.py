@@ -77,23 +77,34 @@ class EpisodicDataset(torch.utils.data.Dataset):
 
 
 def get_norm_stats(dataset_dir, num_episodes):
+    """Iterate through all episodes to calculate the parameters for normalizing action and qpos data.
+    Args
+        dataset_dir (str): Directory contains HDF5 files.
+        num_episodes (int): Number of episodes.
+    Returns
+        (dict): Contains mean and std for action and qpos data.
+            "action_mean": Action mean over all episodes and steps. shape: (state_dim,).
+            "action_std": Action std over all episodes and steps. shape: (state_dim,).
+             "qpos_mean": qpos mean over all episodes and steps. shape: (state_dim,).
+             "qpos_std": qpos std over all episodes and steps. shape: (state_dim,).
+             "example_qpos": Example qpos. shape: (num_steps, state_dim)
+    """
     all_qpos_data = []
     all_action_data = []
     for episode_idx in range(num_episodes):
         dataset_path = os.path.join(dataset_dir, f'episode_{episode_idx}.hdf5')
         with h5py.File(dataset_path, 'r') as root:
             qpos = root['/observations/qpos'][()]
-            qvel = root['/observations/qvel'][()]
+            # qvel = root['/observations/qvel'][()]  # not used
             action = root['/action'][()]
         all_qpos_data.append(torch.from_numpy(qpos))
         all_action_data.append(torch.from_numpy(action))
-    all_qpos_data = torch.stack(all_qpos_data)
-    all_action_data = torch.stack(all_action_data)
-    all_action_data = all_action_data
+    all_qpos_data = torch.stack(all_qpos_data)  # shape: (num_episodes, num_steps, state_dim)
+    all_action_data = torch.stack(all_action_data)  # shape: (num_episodes, num_steps, state_dim)
 
     # normalize action data
-    action_mean = all_action_data.mean(dim=[0, 1], keepdim=True)
-    action_std = all_action_data.std(dim=[0, 1], keepdim=True)
+    action_mean = all_action_data.mean(dim=[0, 1], keepdim=True)  # shape: (1, 1, state_dim)
+    action_std = all_action_data.std(dim=[0, 1], keepdim=True)  # shape: (1, 1, state_dim)
     action_std = torch.clip(action_std, 1e-2, np.inf) # clipping
 
     # normalize qpos data
@@ -109,6 +120,17 @@ def get_norm_stats(dataset_dir, num_episodes):
 
 
 def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val):
+    """Load dataset from the dataset directory and returns torch dataloaders.
+    Args
+        dataset_dir (str): Directory contains HDF5 files.
+        num_episodes (int): Number of episodes.
+        camera_names (list[str]): List of camera names.
+        batch_size_train (int): Training batch size.
+        batch_size_val (int): Validation batch size.
+    Returns
+        (tuple):
+        train_dataloader, val_dataloader, norm_stats, train_dataset.is_sim
+    """
     print(f'\nData from: {dataset_dir}\n')
     # obtain train test split
     train_ratio = 0.8
@@ -179,6 +201,12 @@ def compute_dict_mean(epoch_dicts):
     return result
 
 def detach_dict(d):
+    """Detach tensors in the dictionary values.
+    Args
+        d (dict): A dictionary contains torch tensors as its value.
+    Returns
+        (dict):  A dictionary contains detached torch tensors as its value.
+    """
     new_d = dict()
     for k, v in d.items():
         new_d[k] = v.detach()

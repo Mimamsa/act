@@ -1,0 +1,261 @@
+"""
+"""
+import click
+import os
+import pickle
+import torch
+import matplotlib.pyplot as plt
+import numpy as np
+from tqdm import tqdm
+from copy import deepcopy
+
+from utils import load_data # data functions
+from utils import compute_dict_mean, set_seed, detach_dict # helper functions
+from policy import ACTPolicy, CNNMLPPolicy
+
+
+DATA_DIR = '<put your data dir here>'
+TASK_CONFIGS = {
+    'gello_pnp_cup':{
+        'dataset_dir': DATA_DIR + '/gello_pnp_cup/converted',
+        'num_episodes': 120,  # number of demonstration videos
+        'episode_len': 1000,  # max_timesteps, 1000*DT = 20 seconds
+        'camera_names': ['wrist_rgb']
+    },
+}
+
+
+@click.command()
+@click.option('--ckpt_dir', action='store', type=str, help='ckpt_dir', required=True)
+@click.option('--policy_class', action='store', type=str, help='policy_class, capitalize', required=True)
+@click.option('--task_name', action='store', type=str, help='task_name', required=True)
+@click.option('--batch_size', action='store', type=int, help='batch_size', required=True)
+@click.option('--seed', action='store', type=int, help='seed', required=True)
+@click.option('--num_epochs', action='store', type=int, help='num_epochs', required=True)
+@click.option('--lr', action='store', type=float, help='lr', required=True)
+@click.option('--kl_weight', action='store', type=int, help='KL Weight', required=False)
+@click.option('--chunk_size', action='store', type=int, help='chunk_size', required=False)
+@click.option('--hidden_dim', action='store', type=int, help='hidden_dim', required=False)
+@click.option('--dim_feedforward', action='store', type=int, help='dim_feedforward', required=False)
+@click.option('--temporal_agg', action='store_true')
+def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, kl_weight, chunk_size, hidden_dim, dim_feedforward, temporal_agg):
+
+    set_seed(1)
+
+    batch_size_train = batch_size
+    batch_size_val = batch_size
+
+    # get task parameters
+    task_config = TASK_CONFIGS['pnp_cup']
+    dataset_dir = task_config['dataset_dir']
+    num_episodes = task_config['num_episodes']
+    episode_len = task_config['episode_len']
+    camera_names = task_config['camera_names']
+
+    # fixed parameters
+    state_dim = 7
+    lr_backbone = 1e-5
+    backbone = 'resnet18'
+    if policy_class == 'ACT':
+        enc_layers = 4
+        dec_layers = 7
+        nheads = 8
+        policy_config = {'lr': lr,
+                         'num_queries': chunk_size,
+                         'kl_weight': kl_weight,
+                         'hidden_dim': hidden_dim,
+                         'dim_feedforward': dim_feedforward,
+                         'lr_backbone': lr_backbone,
+                         'backbone': backbone,
+                         'enc_layers': enc_layers,
+                         'dec_layers': dec_layers,
+                         'nheads': nheads,
+                         'camera_names': camera_names,
+                         'state_dim': state_dim,
+                         }
+    elif policy_class == 'CNNMLP':
+        policy_config = {'lr': lr, 'lr_backbone': lr_backbone, 'backbone' : backbone, 'num_queries': 1,
+                         'camera_names': camera_names,}
+    else:
+        raise NotImplementedError
+
+    config = {
+        'num_epochs': num_epochs,
+        'ckpt_dir': ckpt_dir,
+        'episode_len': episode_len,
+        'state_dim': state_dim,
+        'lr': lr,
+        'policy_class': policy_class,
+        # 'onscreen_render': onscreen_render,
+        'policy_config': policy_config,
+        'task_name': task_name,
+        'seed': seed,
+        'temporal_agg': temporal_agg,
+        'camera_names': camera_names,
+        # 'real_robot': True
+    }
+
+    train_dataloader, val_dataloader, stats, _ = load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val)
+
+    # save dataset stats
+    if not os.path.isdir(ckpt_dir):
+        os.makedirs(ckpt_dir)
+    stats_path = os.path.join(ckpt_dir, f'dataset_stats.pkl')
+    with open(stats_path, 'wb') as f:
+        pickle.dump(stats, f)
+
+    best_ckpt_info = train_bc(train_dataloader, val_dataloader, config)
+    best_epoch, min_val_loss, best_state_dict = best_ckpt_info
+
+    # save best checkpoint
+    ckpt_path = os.path.join(ckpt_dir, f'policy_best.ckpt')
+    torch.save(best_state_dict, ckpt_path)
+    print(f'Best ckpt, val loss {min_val_loss:.6f} @ epoch{best_epoch}')
+
+
+def train_bc(train_dataloader, val_dataloader, config):
+    """
+
+    """
+    num_epochs = config['num_epochs']
+    ckpt_dir = config['ckpt_dir']
+    seed = config['seed']
+    policy_class = config['policy_class']
+    policy_config = config['policy_config']
+
+    set_seed(seed)
+
+    policy = make_policy(policy_class, policy_config)
+    policy.cuda()
+    optimizer = make_optimizer(policy_class, policy)
+
+    train_history = []
+    validation_history = []
+    min_val_loss = np.inf
+    best_ckpt_info = None
+    for epoch in tqdm(range(num_epochs)):
+        print(f'\nEpoch {epoch}')
+        # validation
+        with torch.inference_mode():
+            policy.eval()
+            epoch_dicts = []
+            for batch_idx, data in enumerate(val_dataloader):
+                forward_dict = forward_pass(data, policy)
+                epoch_dicts.append(forward_dict)
+            epoch_summary = compute_dict_mean(epoch_dicts)
+            validation_history.append(epoch_summary)
+
+            epoch_val_loss = epoch_summary['loss']
+            if epoch_val_loss < min_val_loss:
+                min_val_loss = epoch_val_loss
+                best_ckpt_info = (epoch, min_val_loss, deepcopy(policy.state_dict()))
+        print(f'Val loss:   {epoch_val_loss:.5f}')
+        summary_string = ''
+        for k, v in epoch_summary.items():
+            summary_string += f'{k}: {v.item():.3f} '
+        print(summary_string)
+
+        # training
+        policy.train()
+        optimizer.zero_grad()
+        for batch_idx, data in enumerate(train_dataloader):
+            forward_dict = forward_pass(data, policy)
+            # backward
+            loss = forward_dict['loss']
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            train_history.append(detach_dict(forward_dict))
+        epoch_summary = compute_dict_mean(train_history[(batch_idx+1)*epoch:(batch_idx+1)*(epoch+1)])
+        epoch_train_loss = epoch_summary['loss']
+        print(f'Train loss: {epoch_train_loss:.5f}')
+        summary_string = ''
+        for k, v in epoch_summary.items():
+            summary_string += f'{k}: {v.item():.3f} '
+        print(summary_string)
+
+        if epoch % 100 == 0:
+            ckpt_path = os.path.join(ckpt_dir, f'policy_epoch_{epoch}_seed_{seed}.ckpt')
+            torch.save(policy.state_dict(), ckpt_path)
+            plot_history(train_history, validation_history, epoch, ckpt_dir, seed)
+
+    ckpt_path = os.path.join(ckpt_dir, f'policy_last.ckpt')
+    torch.save(policy.state_dict(), ckpt_path)
+
+    best_epoch, min_val_loss, best_state_dict = best_ckpt_info
+    ckpt_path = os.path.join(ckpt_dir, f'policy_epoch_{best_epoch}_seed_{seed}.ckpt')
+    torch.save(best_state_dict, ckpt_path)
+    print(f'Training finished:\nSeed {seed}, val loss {min_val_loss:.6f} at epoch {best_epoch}')
+
+    # save training curves
+    plot_history(train_history, validation_history, num_epochs, ckpt_dir, seed)
+
+    return best_ckpt_info
+
+
+def make_policy(policy_class, policy_config):
+    """Returns a policy instance of given config.
+    Args
+        policy_class (str): Policy type ('ACT' or 'CNNMLP').
+        policy_config (dict): Configs for the policy.
+    Returns
+        (torch.nn.Module): Policy class.
+    """
+    if policy_class == 'ACT':
+        policy = ACTPolicy(policy_config)
+    elif policy_class == 'CNNMLP':
+        policy = CNNMLPPolicy(policy_config)
+    else:
+        raise NotImplementedError
+    return policy
+
+
+def make_optimizer(policy_class, policy):
+    """Returns the optimizer inside given policy.
+    Args
+        policy_class (str): Policy type ('ACT' or 'CNNMLP').
+        policy (torch.nn.Module): Policy instance.
+    Returns
+        (torch.optim.Optimizer): The optimizer inside policy .
+    """
+    if policy_class == 'ACT':
+        optimizer = policy.configure_optimizers()
+    elif policy_class == 'CNNMLP':
+        optimizer = policy.configure_optimizers()
+    else:
+        raise NotImplementedError
+    return optimizer
+
+
+def forward_pass(data, policy):
+    """
+    Args
+        data
+        policy (torch.nn.Module): Policy instance.
+    Returns
+        (): In training time, it returns a dictionary contains key 'l1', 'k1', 'loss'; In inference time, 
+    """
+    image_data, qpos_data, action_data, is_pad = data
+    image_data, qpos_data, action_data, is_pad = image_data.cuda(), qpos_data.cuda(), action_data.cuda(), is_pad.cuda()
+    return policy(qpos_data, image_data, action_data, is_pad) # TODO remove None
+
+
+def plot_history(train_history, validation_history, num_epochs, ckpt_dir, seed):
+    # save training curves
+    for key in train_history[0]:
+        plot_path = os.path.join(ckpt_dir, f'train_val_{key}_seed_{seed}.png')
+        plt.figure()
+        train_values = [summary[key].item() for summary in train_history]
+        val_values = [summary[key].item() for summary in validation_history]
+        plt.plot(np.linspace(0, num_epochs-1, len(train_history)), train_values, label='train')
+        plt.plot(np.linspace(0, num_epochs-1, len(validation_history)), val_values, label='validation')
+        # plt.ylim([-0.1, 1])
+        plt.tight_layout()
+        plt.legend()
+        plt.title(key)
+        plt.savefig(plot_path)
+    print(f'Saved plots to {ckpt_dir}')
+
+
+if __name__ == '__main__':
+    main()
