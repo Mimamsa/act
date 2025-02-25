@@ -47,7 +47,7 @@ def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, ma
     batch_size_val = batch_size
 
     # get task parameters
-    task_config = TASK_CONFIGS['pnp_cup']
+    task_config = TASK_CONFIGS['gello_pnp_cup']
     dataset_dir = task_config['dataset_dir']
     num_episodes = task_config['num_episodes']
     episode_len = task_config['episode_len']
