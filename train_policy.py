@@ -229,6 +229,7 @@ def forward_pass(data, policy):
         (): In training time, it returns a dictionary contains key 'l1', 'k1', 'loss'; In inference time, 
     """
     image_data, qpos_data, action_data, is_pad = data
+    qpos_data, action_data = qpos_data.float(), action_data.float()
     image_data, qpos_data, action_data, is_pad = image_data.cuda(), qpos_data.cuda(), action_data.cuda(), is_pad.cuda()
     return policy(qpos_data, image_data, action_data, is_pad) # TODO remove None
 
