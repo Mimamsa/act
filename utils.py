@@ -25,7 +25,7 @@ def repeat_last(arr, n, axis):
     repeated_shape = [-1,] * arr.ndim
     repeated_shape[axis] = n
     repeated = np.tile(last, n).reshape(repeated_shape)
-    ret = np.concat((arr, repeated), axis=axis)
+    ret = np.concatenate((arr, repeated), axis=axis)
     return ret
 
 
