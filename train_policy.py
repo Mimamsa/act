@@ -26,20 +26,20 @@ TASK_CONFIGS = {
 
 
 @click.command()
-@click.option('--ckpt_dir', action='store', type=str, help='ckpt_dir', required=True)
-@click.option('--policy_class', action='store', type=str, help='policy_class, capitalize', required=True)
-@click.option('--task_name', action='store', type=str, help='task_name', required=True)
-@click.option('--batch_size', action='store', type=int, help='batch_size', required=True)
-@click.option('--seed', action='store', type=int, help='seed', required=True)
-@click.option('--num_epochs', action='store', type=int, help='num_epochs', required=True)
-@click.option('--lr', action='store', type=float, help='lr', required=True)
-@click.option('--kl_weight', action='store', type=int, help='KL Weight', required=False)
-@click.option('--chunk_size', action='store', type=int, help='chunk_size', required=False)
-@click.option('--hidden_dim', action='store', type=int, help='hidden_dim', required=False)
-@click.option('--dim_feedforward', action='store', type=int, help='dim_feedforward', required=False)
-@click.option('--temporal_agg', action='store_true')  # Not used for training
-@click.option('--max_episode_len', action='store', type=int, help='maximum episode length among demonstrations', required=False)
-def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, kl_weight, chunk_size, hidden_dim, dim_feedforward, temporal_agg, max_episode_len):
+@click.option('--ckpt_dir', type=str, help='ckpt_dir', required=True)
+@click.option('--policy_class', type=str, help='policy_class, capitalize', required=True)
+@click.option('--task_name', type=str, help='task_name', required=True)
+@click.option('--batch_size', type=int, help='batch_size', required=True)
+@click.option('--seed', type=int, help='seed', required=True)
+@click.option('--num_epochs', type=int, help='num_epochs', required=True)
+@click.option('--lr', type=float, help='lr', required=True)
+@click.option('--max_episode_len', type=int, help='maximum episode length among demonstrations', required=True)
+@click.option('--kl_weight', type=int, help='KL Weight', required=False)
+@click.option('--chunk_size', type=int, help='chunk_size', required=False)
+@click.option('--hidden_dim', type=int, help='hidden_dim', required=False)
+@click.option('--dim_feedforward', type=int, help='dim_feedforward', required=False)
+#@click.option('--temporal_agg', is_flag=True)  # Not used for training
+def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, max_episode_len, kl_weight, chunk_size, hidden_dim, dim_feedforward):
 
     set_seed(1)
 
@@ -91,7 +91,7 @@ def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, kl
         'policy_config': policy_config,
         'task_name': task_name,
         'seed': seed,
-        'temporal_agg': temporal_agg,
+        #'temporal_agg': temporal_agg,
         'camera_names': camera_names,
         # 'real_robot': True
     }
