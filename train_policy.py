@@ -14,12 +14,12 @@ from utils import compute_dict_mean, set_seed, detach_dict # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
 
 
-DATA_DIR = '<put your data dir here>'
+DATA_DIR = '/home/jovyan'
 TASK_CONFIGS = {
     'gello_pnp_cup':{
-        'dataset_dir': DATA_DIR + '/gello_pnp_cup/converted',
+        'dataset_dir': DATA_DIR + '/pick-n-place-the-cup-02/gello_pnp_cup_20240123',
         'num_episodes': 120,  # number of demonstration videos
-        'episode_len': 1000,  # max_timesteps, 1000*DT = 20 seconds
+        'episode_len': 306,  # max_timesteps, 1000*DT = 20 seconds (not used for training)
         'camera_names': ['wrist_rgb']
     },
 }
@@ -37,8 +37,9 @@ TASK_CONFIGS = {
 @click.option('--chunk_size', action='store', type=int, help='chunk_size', required=False)
 @click.option('--hidden_dim', action='store', type=int, help='hidden_dim', required=False)
 @click.option('--dim_feedforward', action='store', type=int, help='dim_feedforward', required=False)
-@click.option('--temporal_agg', action='store_true')
-def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, kl_weight, chunk_size, hidden_dim, dim_feedforward, temporal_agg):
+@click.option('--temporal_agg', action='store_true')  # Not used for training
+@click.option('--max_episode_len', action='store', type=int, help='maximum episode length among demonstrations', required=False)
+def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, kl_weight, chunk_size, hidden_dim, dim_feedforward, temporal_agg, max_episode_len):
 
     set_seed(1)
 
@@ -95,7 +96,7 @@ def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, kl
         # 'real_robot': True
     }
 
-    train_dataloader, val_dataloader, stats, _ = load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val)
+    train_dataloader, val_dataloader, stats, _ = load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val, max_episode_len)
 
     # save dataset stats
     if not os.path.isdir(ckpt_dir):

@@ -7,13 +7,53 @@ from torch.utils.data import TensorDataset, DataLoader
 import IPython
 e = IPython.embed
 
+
+def repeat_last(arr, n, axis):
+    """Repeat the last item `n` times along the first dimension (axis=0).
+        ref: https://stackoverflow.com/questions/48804698/repeat-last-column-in-numpy-array
+    Args
+        arr (np.ndarray): Array to be repeated.
+        n (int): Number of repeat.
+    Returns
+        (np.ndarray): Resulting array.
+    """
+    #ret = np.vstack((arr, np.broadcast_to(arr[-1,:][None,:], (n, arr.shape[1]))))
+    #ret = np.repeat(arr, [1]*(arr.shape[0]-1)+[n+1], axis=0)
+    #ret = np.vstack((arr, np.tile(arr[-1,:], n).reshape(n,-1)))
+    
+    last = np.take(arr, [-1], axis=axis)
+    repeated_shape = [-1,] * arr.ndim
+    repeated_shape[axis] = n
+    repeated = np.tile(last, n).reshape(repeated_shape)
+    ret = np.concat((arr, repeated), axis=axis)
+    return ret
+
+
 class EpisodicDataset(torch.utils.data.Dataset):
-    def __init__(self, episode_ids, dataset_dir, camera_names, norm_stats):
+    """
+    Padding `max_episode_len`:
+
+    0                episode_len   max_episode_len
+    |-------------o------|----------|
+         original part    padded part
+
+    pad_len = max_episode_len - episode_len
+         
+
+    - Padded part is padded with last frame of original part.
+    - Samples `start_ts` within original part.
+    - Returns a length of both part vector.
+
+                  |-----------|
+                   num_queries
+    """
+    def __init__(self, episode_ids, dataset_dir, camera_names, norm_stats, max_episode_len):
         super(EpisodicDataset).__init__()
         self.episode_ids = episode_ids
         self.dataset_dir = dataset_dir
         self.camera_names = camera_names
         self.norm_stats = norm_stats
+        self.max_episode_len = max_episode_len
         self.is_sim = None
         self.__getitem__(0) # initialize self.is_sim
 
@@ -35,22 +75,28 @@ class EpisodicDataset(torch.utils.data.Dataset):
                 start_ts = np.random.choice(episode_len)
             # get observation at start_ts only
             qpos = root['/observations/qpos'][start_ts]
-            qvel = root['/observations/qvel'][start_ts]
+            # qvel = root['/observations/qvel'][start_ts]  # not used
             image_dict = dict()
             for cam_name in self.camera_names:
                 image_dict[cam_name] = root[f'/observations/images/{cam_name}'][start_ts]
+
             # get all actions after and including start_ts
             if is_sim:
                 action = root['/action'][start_ts:]
-                action_len = episode_len - start_ts
+                action_len = self.max_episode_len - start_ts
             else:
                 action = root['/action'][max(0, start_ts - 1):] # hack, to make timesteps more aligned
-                action_len = episode_len - max(0, start_ts - 1) # hack, to make timesteps more aligned
+                action_len = self.max_episode_len - max(0, start_ts - 1) # hack, to make timesteps more aligned
+
+        # Pad `action` and `is_pad` with its last frame to length of `self.max_episode_len`
+        rep_len = self.max_episode_len - episode_len
+        if rep_len > 0:
+            action = repeat_last(action, rep_len, axis=0)  # (seq, state_dim)
 
         self.is_sim = is_sim
-        padded_action = np.zeros(original_action_shape, dtype=np.float32)
+        padded_action = np.zeros((self.max_episode_len, original_action_shape[1]), dtype=np.float32)
         padded_action[:action_len] = action
-        is_pad = np.zeros(episode_len)
+        is_pad = np.zeros(self.max_episode_len)
         is_pad[action_len:] = 1
 
         # new axis for different cameras
@@ -119,7 +165,7 @@ def get_norm_stats(dataset_dir, num_episodes):
     return stats
 
 
-def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val):
+def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val, max_episode_len):
     """Load dataset from the dataset directory and returns torch dataloaders.
     Args
         dataset_dir (str): Directory contains HDF5 files.
@@ -127,6 +173,7 @@ def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_s
         camera_names (list[str]): List of camera names.
         batch_size_train (int): Training batch size.
         batch_size_val (int): Validation batch size.
+        max_episode_len (int): Maximum episode length.
     Returns
         (tuple):
         train_dataloader, val_dataloader, norm_stats, train_dataset.is_sim
@@ -142,8 +189,8 @@ def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_s
     norm_stats = get_norm_stats(dataset_dir, num_episodes)
 
     # construct dataset and dataloader
-    train_dataset = EpisodicDataset(train_indices, dataset_dir, camera_names, norm_stats)
-    val_dataset = EpisodicDataset(val_indices, dataset_dir, camera_names, norm_stats)
+    train_dataset = EpisodicDataset(train_indices, dataset_dir, camera_names, norm_stats, max_episode_len)
+    val_dataset = EpisodicDataset(val_indices, dataset_dir, camera_names, norm_stats, max_episode_len)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size_train, shuffle=True, pin_memory=True, num_workers=1, prefetch_factor=1)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size_val, shuffle=True, pin_memory=True, num_workers=1, prefetch_factor=1)
 
