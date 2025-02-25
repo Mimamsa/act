@@ -1,6 +1,6 @@
 """
 """
-import click
+import argparse
 import os
 import pickle
 import torch
@@ -25,26 +25,18 @@ TASK_CONFIGS = {
 }
 
 
-@click.command()
-@click.option('--ckpt_dir', type=str, help='ckpt_dir', required=True)
-@click.option('--policy_class', type=str, help='policy_class, capitalize', required=True)
-@click.option('--task_name', type=str, help='task_name', required=True)
-@click.option('--batch_size', type=int, help='batch_size', required=True)
-@click.option('--seed', type=int, help='seed', required=True)
-@click.option('--num_epochs', type=int, help='num_epochs', required=True)
-@click.option('--lr', type=float, help='lr', required=True)
-@click.option('--max_episode_len', type=int, help='maximum episode length among demonstrations', required=True)
-@click.option('--kl_weight', type=int, help='KL Weight', required=False)
-@click.option('--chunk_size', type=int, help='chunk_size', required=False)
-@click.option('--hidden_dim', type=int, help='hidden_dim', required=False)
-@click.option('--dim_feedforward', type=int, help='dim_feedforward', required=False)
-#@click.option('--temporal_agg', is_flag=True)  # Not used for training
-def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, max_episode_len, kl_weight, chunk_size, hidden_dim, dim_feedforward):
+def main(args):
 
     set_seed(1)
 
-    batch_size_train = batch_size
-    batch_size_val = batch_size
+    # command line parameters
+    ckpt_dir = args['ckpt_dir']
+    policy_class = args['policy_class']
+    task_name = args['task_name']
+    batch_size_train = args['batch_size']
+    batch_size_val = args['batch_size']
+    num_epochs = args['num_epochs']
+    max_episode_len = args['max_episode_len']
 
     # get task parameters
     task_config = TASK_CONFIGS['gello_pnp_cup']
@@ -61,11 +53,11 @@ def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, ma
         enc_layers = 4
         dec_layers = 7
         nheads = 8
-        policy_config = {'lr': lr,
-                         'num_queries': chunk_size,
-                         'kl_weight': kl_weight,
-                         'hidden_dim': hidden_dim,
-                         'dim_feedforward': dim_feedforward,
+        policy_config = {'lr': args['lr'],
+                         'num_queries': args['chunk_size'],
+                         'kl_weight': args['kl_weight'],
+                         'hidden_dim': args['hidden_dim'],
+                         'dim_feedforward': args['dim_feedforward'],
                          'lr_backbone': lr_backbone,
                          'backbone': backbone,
                          'enc_layers': enc_layers,
@@ -85,12 +77,12 @@ def main(ckpt_dir, policy_class, task_name, batch_size, seed, num_epochs, lr, ma
         'ckpt_dir': ckpt_dir,
         'episode_len': episode_len,
         'state_dim': state_dim,
-        'lr': lr,
+        'lr': args['lr'],
         'policy_class': policy_class,
         # 'onscreen_render': onscreen_render,
         'policy_config': policy_config,
         'task_name': task_name,
-        'seed': seed,
+        'seed': args['seed'],
         #'temporal_agg': temporal_agg,
         'camera_names': camera_names,
         # 'real_robot': True
@@ -259,4 +251,23 @@ def plot_history(train_history, validation_history, num_epochs, ckpt_dir, seed):
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--eval', action='store_true')
+    parser.add_argument('--onscreen_render', action='store_true')
+    parser.add_argument('--ckpt_dir', action='store', type=str, help='ckpt_dir', required=True)
+    parser.add_argument('--policy_class', action='store', type=str, help='policy_class, capitalize', required=True)
+    parser.add_argument('--task_name', action='store', type=str, help='task_name', required=True)
+    parser.add_argument('--batch_size', action='store', type=int, help='batch_size', required=True)
+    parser.add_argument('--seed', action='store', type=int, help='seed', required=True)
+    parser.add_argument('--num_epochs', action='store', type=int, help='num_epochs', required=True)
+    parser.add_argument('--lr', action='store', type=float, help='lr', required=True)
+    parser.add_argument('--max_episode_len', action='store', type=int, help='maximum episode length among demonstrations', required=True)
+
+    # for ACT
+    parser.add_argument('--kl_weight', action='store', type=int, help='KL Weight', required=False)
+    parser.add_argument('--chunk_size', action='store', type=int, help='chunk_size', required=False)
+    parser.add_argument('--hidden_dim', action='store', type=int, help='hidden_dim', required=False)
+    parser.add_argument('--dim_feedforward', action='store', type=int, help='dim_feedforward', required=False)
+    parser.add_argument('--temporal_agg', action='store_true')
+    
+    main(vars(parser.parse_args()))
